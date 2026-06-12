@@ -170,8 +170,16 @@ export function generateRace(seed: number, distance: number) {
   const raceName = RACE_NAMES[Math.floor(rand() * RACE_NAMES.length)];
   const raceNo = 1 + Math.floor(rand() * 11);
   const grade = distance >= 2000 ? "G I" : distance >= 1600 ? "G II" : "G III";
-  return { horses, title: `第${raceNo}R ${raceName} (${grade}) 芝${distance}m` };
+  return {
+    horses,
+    title: `第${raceNo}R ${raceName} (${grade}) 芝${distance}m`,
+    raceName,
+    raceNo,
+    grade,
+  };
 }
+
+export type RaceInfo = ReturnType<typeof generateRace>;
 
 export function placeOdds(winOdds: number) {
   return Math.max(1.1, Math.round((1 + (winOdds - 1) * 0.25) * 10) / 10);

@@ -12,6 +12,7 @@ import {
   Player,
   placeOdds,
   quinellaOdds,
+  RaceInfo,
   styleMod,
   WAKU_COLORS,
   WAKU_TEXT,
@@ -21,6 +22,20 @@ type Phase = "setup" | "betting" | "race" | "result";
 
 const DISTANCES = [1200, 1600, 2000, 2400, 3200];
 const START_BALANCE = 10000;
+const PLAYER_COLORS = [
+  "#e0a437",
+  "#5b8def",
+  "#e06363",
+  "#52b788",
+  "#b07fe0",
+  "#e08fc0",
+];
+const STYLE_CLASS: Record<string, string> = {
+  逃げ: "nige",
+  先行: "senko",
+  差し: "sashi",
+  追込: "oikomi",
+};
 
 // ---------------------------------------------------------------- メイン
 export default function Home() {
@@ -28,13 +43,10 @@ export default function Home() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9));
   const [distance, setDistance] = useState(2000);
-  const [race, setRace] = useState<{ horses: Horse[]; title: string } | null>(
-    null
-  );
+  const [race, setRace] = useState<RaceInfo | null>(null);
   const [bets, setBets] = useState<Bet[]>([]);
   const [order, setOrder] = useState<Horse[]>([]);
 
-  // localStorage 復元
   useEffect(() => {
     try {
       const raw = localStorage.getItem("keiba-royale-players");
@@ -49,18 +61,15 @@ export default function Home() {
       localStorage.setItem("keiba-royale-players", JSON.stringify(players));
   }, [players]);
 
-  const newRace = useCallback(
-    (s: number, d: number) => {
-      setRace(generateRace(s, d));
-      setBets([]);
-    },
-    []
-  );
+  const newRace = useCallback((s: number, d: number) => {
+    setRace(generateRace(s, d));
+    setBets([]);
+  }, []);
 
-  const startGame = (names: string[], keepBalance: boolean) => {
+  const startGame = (names: string[]) => {
     setPlayers((prev) =>
       names.map((n) => {
-        const old = keepBalance ? prev.find((p) => p.name === n) : undefined;
+        const old = prev.find((p) => p.name === n);
         return { name: n, balance: old ? old.balance : START_BALANCE };
       })
     );
@@ -69,13 +78,14 @@ export default function Home() {
   };
 
   const changeDistance = (d: number) => {
-    // ベット済みなら返金してから引き直し
     setPlayers((ps) =>
       ps.map((p, i) => ({
         ...p,
         balance:
           p.balance +
-          bets.filter((b) => b.playerIdx === i).reduce((a, b) => a + b.amount, 0),
+          bets
+            .filter((b) => b.playerIdx === i)
+            .reduce((a, b) => a + b.amount, 0),
       }))
     );
     setDistance(d);
@@ -103,12 +113,10 @@ export default function Home() {
 
   const onRaceFinish = (finished: Horse[]) => {
     setOrder(finished);
-    // 払い戻し
     setPlayers((ps) => {
       const next = ps.map((p) => ({ ...p }));
       for (const bet of bets) {
-        const pay = calcPayout(bet, finished);
-        next[bet.playerIdx].balance += pay;
+        next[bet.playerIdx].balance += calcPayout(bet, finished);
       }
       return next;
     });
@@ -130,9 +138,7 @@ export default function Home() {
         </h1>
         <p className="sub">歴代の名馬で遊ぶベッティングゲーム</p>
       </header>
-      {phase === "setup" && (
-        <SetupScreen prev={players} onStart={startGame} />
-      )}
+      {phase === "setup" && <SetupScreen prev={players} onStart={startGame} />}
       {phase === "betting" && race && (
         <BettingScreen
           race={race}
@@ -147,11 +153,7 @@ export default function Home() {
         />
       )}
       {phase === "race" && race && (
-        <RaceScreen
-          race={race}
-          distance={distance}
-          onFinish={onRaceFinish}
-        />
+        <RaceScreen race={race} distance={distance} onFinish={onRaceFinish} />
       )}
       {phase === "result" && race && (
         <ResultScreen
@@ -183,8 +185,11 @@ function calcPayout(bet: Bet, order: Horse[]): number {
       return Math.floor(bet.amount * placeOdds(byNum(bet.horses[0]).odds));
     return 0;
   }
-  // 馬連
-  const top2 = order.slice(0, 2).map((h) => h.num).sort().join("-");
+  const top2 = order
+    .slice(0, 2)
+    .map((h) => h.num)
+    .sort()
+    .join("-");
   const sel = [...bet.horses].sort().join("-");
   if (top2 === sel)
     return Math.floor(
@@ -199,7 +204,7 @@ function SetupScreen({
   onStart,
 }: {
   prev: Player[];
-  onStart: (names: string[], keep: boolean) => void;
+  onStart: (names: string[]) => void;
 }) {
   const [names, setNames] = useState<string[]>(
     prev.length ? prev.map((p) => p.name) : ["プレイヤー1", "プレイヤー2"]
@@ -208,11 +213,18 @@ function SetupScreen({
     <section className="panel setup">
       <h2>👥 プレイヤー登録</h2>
       <p className="muted">
-        参加メンバーを入力してね（1〜6人 / 持ちポイント {START_BALANCE.toLocaleString()}pt スタート）
+        参加メンバーを入力してね（1〜6人 / 持ちポイント{" "}
+        {START_BALANCE.toLocaleString()}pt スタート）
       </p>
       <div className="nameList">
         {names.map((n, i) => (
           <div key={i} className="nameRow">
+            <span
+              className="pAvatar"
+              style={{ background: PLAYER_COLORS[i % 6] }}
+            >
+              {n.trim().slice(0, 1) || "?"}
+            </span>
             <input
               value={n}
               maxLength={12}
@@ -242,7 +254,7 @@ function SetupScreen({
       <button
         className="btn primary big"
         disabled={names.some((n) => !n.trim())}
-        onClick={() => onStart(names.map((n) => n.trim()), true)}
+        onClick={() => onStart(names.map((n) => n.trim()))}
       >
         競馬場へ入場する 🏟️
       </button>
@@ -262,7 +274,7 @@ function BettingScreen({
   onStart,
   onBackSetup,
 }: {
-  race: { horses: Horse[]; title: string };
+  race: RaceInfo;
   distance: number;
   players: Player[];
   bets: Bet[];
@@ -278,217 +290,354 @@ function BettingScreen({
   const [amount, setAmount] = useState(500);
 
   const need = betType === "quinella" ? 2 : 1;
-  const toggleHorse = (n: number) => {
+  useEffect(() => setSel([]), [betType]);
+
+  const toggleHorse = (n: number) =>
     setSel((s) =>
       s.includes(n) ? s.filter((x) => x !== n) : [...s.slice(-(need - 1)), n]
     );
-  };
-  useEffect(() => setSel([]), [betType]);
 
   const popularity = [...race.horses]
     .sort((a, b) => a.odds - b.odds)
     .map((h) => h.num);
+  const maxProb = Math.max(...race.horses.map((h) => h.prob));
+  const byNum = (n: number) => race.horses.find((h) => h.num === n)!;
 
-  const previewOdds = () => {
+  const previewOdds = (): number | null => {
     if (sel.length < need) return null;
-    const h = race.horses.find((x) => x.num === sel[0])!;
+    const h = byNum(sel[0]);
     if (betType === "win") return h.odds;
     if (betType === "place") return placeOdds(h.odds);
-    const h2 = race.horses.find((x) => x.num === sel[1])!;
-    return quinellaOdds(h, h2);
+    return quinellaOdds(h, byNum(sel[1]));
   };
-
-  const canBet =
-    sel.length === need &&
-    amount > 0 &&
-    players[playerIdx].balance >= amount;
+  const odds = previewOdds();
+  const player = players[playerIdx];
+  const canBet = sel.length === need && amount >= 100 && player.balance >= amount;
+  const gradeClass =
+    race.grade === "G I" ? "g1" : race.grade === "G II" ? "g2" : "g3";
 
   return (
-    <section className="betting">
-      <div className="panel raceInfo">
-        <h2>{race.title}</h2>
+    <section className="betting2">
+      {/* レースバナー */}
+      <div className="raceBanner">
+        <div className="raceBannerMain">
+          <span className={`gradeBadge ${gradeClass}`}>{race.grade}</span>
+          <div>
+            <h2>
+              第{race.raceNo}R {race.raceName}
+            </h2>
+            <p className="raceMeta">
+              芝{distance}m・良 ☀️ 晴 ／ 8頭立て ／ 発走間近
+            </p>
+          </div>
+        </div>
         <div className="distRow">
-          <span className="muted">距離変更:</span>
           {DISTANCES.map((d) => (
             <button
               key={d}
-              className={`btn small ${d === distance ? "primary" : "ghost"}`}
+              className={`distBtn ${d === distance ? "on" : ""}`}
               onClick={() => onChangeDistance(d)}
             >
               {d}m
             </button>
           ))}
         </div>
-        <table className="horseTable">
-          <thead>
-            <tr>
-              <th>馬番</th>
-              <th>馬名</th>
-              <th>脚質</th>
-              <th>単勝</th>
-              <th>複勝</th>
-              <th>人気</th>
-            </tr>
-          </thead>
-          <tbody>
-            {race.horses.map((h) => (
-              <tr key={h.num}>
-                <td>
-                  <span
-                    className="waku"
-                    style={{
-                      background: WAKU_COLORS[h.num - 1],
-                      color: WAKU_TEXT[h.num - 1],
-                    }}
-                  >
-                    {h.num}
-                  </span>
-                </td>
-                <td className="horseName">{h.name}</td>
-                <td>{h.style}</td>
-                <td className="odds">{h.odds.toFixed(1)}</td>
-                <td className="muted">{placeOdds(h.odds).toFixed(1)}</td>
-                <td>{popularity.indexOf(h.num) + 1}番人気</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
 
-      <div className="panel betPanel">
-        <h2>🎫 馬券売場</h2>
-        <div className="tabRow">
-          {players.map((p, i) => (
-            <button
-              key={i}
-              className={`tab ${i === playerIdx ? "active" : ""}`}
-              onClick={() => setPlayerIdx(i)}
-            >
-              {p.name}
-              <span className="bal">{p.balance.toLocaleString()}pt</span>
-            </button>
-          ))}
+      {/* 出馬表 */}
+      <div className="panel umaPanel">
+        <div className="panelHead">
+          <h3>📋 出馬表</h3>
+          <span className="muted">馬をタップして馬券に追加</span>
         </div>
-        <div className="betTypeRow">
-          {(Object.keys(BET_LABEL) as BetType[]).map((t) => (
-            <button
-              key={t}
-              className={`btn small ${betType === t ? "primary" : "ghost"}`}
-              onClick={() => setBetType(t)}
-            >
-              {BET_LABEL[t]}
-            </button>
-          ))}
-          <span className="muted hint">
-            {betType === "win" && "1着を当てる"}
-            {betType === "place" && "3着以内に入れば的中"}
-            {betType === "quinella" && "1・2着の組み合わせ(2頭選択)"}
-          </span>
-        </div>
-        <div className="horsePick">
-          {race.horses.map((h) => (
-            <button
-              key={h.num}
-              className={`pick ${sel.includes(h.num) ? "selected" : ""}`}
-              style={{
-                borderColor: WAKU_COLORS[h.num - 1],
-              }}
-              onClick={() => toggleHorse(h.num)}
-            >
-              <span
-                className="waku"
-                style={{
-                  background: WAKU_COLORS[h.num - 1],
-                  color: WAKU_TEXT[h.num - 1],
-                }}
+        <div className="umaList">
+          {race.horses.map((h) => {
+            const rank = popularity.indexOf(h.num) + 1;
+            const selIdx = sel.indexOf(h.num);
+            return (
+              <button
+                key={h.num}
+                className={`horseRow ${selIdx >= 0 ? "sel" : ""}`}
+                onClick={() => toggleHorse(h.num)}
               >
-                {h.num}
-              </span>
-              <span className="pickName">{h.name}</span>
-            </button>
-          ))}
-        </div>
-        <div className="amountRow">
-          <input
-            type="number"
-            value={amount}
-            min={100}
-            step={100}
-            onChange={(e) => setAmount(Math.max(0, +e.target.value))}
-          />
-          <span className="muted">pt</span>
-          {[100, 500, 1000, 5000].map((a) => (
-            <button key={a} className="btn small ghost" onClick={() => setAmount(a)}>
-              {a >= 1000 ? `${a / 1000}k` : a}
-            </button>
-          ))}
-        </div>
-        {previewOdds() && (
-          <p className="preview">
-            オッズ <b>{previewOdds()!.toFixed(1)}倍</b> → 的中なら{" "}
-            <b className="gold">
-              {Math.floor(amount * previewOdds()!).toLocaleString()}pt
-            </b>
-          </p>
-        )}
-        <button
-          className="btn primary"
-          disabled={!canBet}
-          onClick={() => {
-            onAddBet({ playerIdx, type: betType, horses: [...sel], amount });
-            setSel([]);
-          }}
-        >
-          この内容でベットする
-        </button>
-        {players[playerIdx].balance < amount && (
-          <p className="warn">ポイントが足りないよ💦</p>
-        )}
-
-        <h3>購入済み馬券 ({bets.length}枚)</h3>
-        <ul className="betList">
-          {bets.map((b, i) => (
-            <li key={i}>
-              <span className="betPlayer">{players[b.playerIdx].name}</span>
-              <span>{BET_LABEL[b.type]}</span>
-              <span>
-                {b.horses
-                  .map((n) => `${n}.${race.horses.find((h) => h.num === n)!.name}`)
-                  .join(" - ")}
-              </span>
-              <span className="odds">{b.amount.toLocaleString()}pt</span>
-              <button className="btn small ghost" onClick={() => onRemoveBet(i)}>
-                取消
+                <span
+                  className="waku big"
+                  style={{
+                    background: WAKU_COLORS[h.num - 1],
+                    color: WAKU_TEXT[h.num - 1],
+                  }}
+                >
+                  {h.num}
+                </span>
+                <span className="hInfo">
+                  <span className="hName">{h.name}</span>
+                  <span className="hSub">
+                    <i className={`styleBadge s-${STYLE_CLASS[h.style]}`}>
+                      {h.style}
+                    </i>
+                    <span className="probBar">
+                      <i style={{ width: `${(h.prob / maxProb) * 100}%` }} />
+                    </span>
+                  </span>
+                </span>
+                <span className="hOdds">
+                  <b
+                    className={
+                      h.odds < 5 ? "hot" : h.odds < 20 ? "mid" : "cold"
+                    }
+                  >
+                    {h.odds.toFixed(1)}
+                  </b>
+                  <small>倍</small>
+                </span>
+                <span className={`popBadge p${rank <= 3 ? rank : "x"}`}>
+                  {rank}人気
+                </span>
+                {selIdx >= 0 && (
+                  <span className="selMark">
+                    {need === 2 ? (selIdx === 0 ? "1頭目" : "2頭目") : "✓ 選択中"}
+                  </span>
+                )}
               </button>
-            </li>
-          ))}
-          {!bets.length && <li className="muted">まだ馬券がないよ〜</li>}
-        </ul>
-        <div className="startRow">
-          <button className="btn ghost" onClick={onBackSetup}>
-            メンバー変更
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="rightCol">
+        {/* 馬券購入 */}
+        <div className="panel buyPanel">
+          <div className="panelHead">
+            <h3>🎫 馬券を買う</h3>
+          </div>
+
+          <div className="pTabs">
+            {players.map((p, i) => (
+              <button
+                key={i}
+                className={`pTab ${i === playerIdx ? "active" : ""}`}
+                onClick={() => setPlayerIdx(i)}
+              >
+                <span
+                  className="pAvatar"
+                  style={{ background: PLAYER_COLORS[i % 6] }}
+                >
+                  {p.name.slice(0, 1)}
+                </span>
+                <span className="pTabInfo">
+                  <b>{p.name}</b>
+                  <small>{p.balance.toLocaleString()}pt</small>
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <p className="stepLabel">
+            <b>①</b> 式別をえらぶ
+          </p>
+          <div className="typeRow">
+            {(Object.keys(BET_LABEL) as BetType[]).map((t) => (
+              <button
+                key={t}
+                className={`typeBtn ${betType === t ? "on" : ""}`}
+                onClick={() => setBetType(t)}
+              >
+                <b>{BET_LABEL[t]}</b>
+                <small>
+                  {t === "win" && "1着を当てる"}
+                  {t === "place" && "3着以内でOK"}
+                  {t === "quinella" && "1・2着の組合せ"}
+                </small>
+              </button>
+            ))}
+          </div>
+
+          <p className="stepLabel">
+            <b>②</b> 馬をえらぶ{" "}
+            <span className="muted">
+              （出馬表をタップ{need === 2 ? "・2頭" : ""}）
+            </span>
+          </p>
+          <div className="selChips">
+            {sel.length === 0 && (
+              <span className="muted">← 出馬表から選んでね</span>
+            )}
+            {sel.map((n) => (
+              <span key={n} className="selChip">
+                <span
+                  className="waku"
+                  style={{
+                    background: WAKU_COLORS[n - 1],
+                    color: WAKU_TEXT[n - 1],
+                  }}
+                >
+                  {n}
+                </span>
+                {byNum(n).name}
+                <button onClick={() => toggleHorse(n)}>✕</button>
+              </span>
+            ))}
+          </div>
+
+          <p className="stepLabel">
+            <b>③</b> 金額をきめる
+          </p>
+          <div className="amountBox">
+            <div className="amountDisp">
+              <input
+                type="number"
+                value={amount || ""}
+                min={100}
+                step={100}
+                onChange={(e) =>
+                  setAmount(Math.max(0, Math.floor(+e.target.value)))
+                }
+              />
+              <span>pt</span>
+            </div>
+            <div className="amountChips">
+              {[100, 500, 1000, 5000].map((a) => (
+                <button key={a} onClick={() => setAmount((x) => x + a)}>
+                  +{a >= 1000 ? `${a / 1000}k` : a}
+                </button>
+              ))}
+              <button className="clear" onClick={() => setAmount(0)}>
+                C
+              </button>
+            </div>
+          </div>
+
+          {/* 馬券プレビュー */}
+          {sel.length === need && odds ? (
+            <div className={`ticket t-${betType}`}>
+              <div className="ticketHead">
+                <span>KEIBA ROYALE</span>
+                <span>
+                  第{race.raceNo}R {race.raceName}
+                </span>
+              </div>
+              <div className="ticketBody">
+                <span className="ticketType">{BET_LABEL[betType]}</span>
+                <span className="ticketHorses">
+                  {sel.map((n) => (
+                    <span key={n}>
+                      <b>{n}</b> {byNum(n).name}
+                    </span>
+                  ))}
+                </span>
+                <span className="ticketAmount">
+                  {amount.toLocaleString()}
+                  <small>pt</small>
+                </span>
+              </div>
+              <div className="ticketFoot">
+                <span>
+                  オッズ <b>{odds.toFixed(1)}倍</b>
+                </span>
+                <span>
+                  的中なら{" "}
+                  <b className="payGold">
+                    {Math.floor(amount * odds).toLocaleString()}pt
+                  </b>
+                </span>
+              </div>
+              <div className="barcode" />
+            </div>
+          ) : (
+            <div className="ticketEmpty">
+              式別と馬{need === 2 ? "2頭" : ""}を選ぶと馬券プレビューが出るよ
+            </div>
+          )}
+
+          <button
+            className="btn primary big buyBtn"
+            disabled={!canBet}
+            onClick={() => {
+              onAddBet({ playerIdx, type: betType, horses: [...sel], amount });
+              setSel([]);
+            }}
+          >
+            🎫 {player.name} がこの馬券を購入
           </button>
-          <button className="btn primary big" onClick={onStart}>
-            🏇 レース発走！
-          </button>
+          {player.balance < amount && (
+            <p className="warn">ポイントが足りないよ💦</p>
+          )}
+        </div>
+
+        {/* 購入済み */}
+        <div className="panel slipPanel">
+          <div className="panelHead">
+            <h3>🧾 購入済み馬券（{bets.length}枚）</h3>
+          </div>
+          <ul className="slipList">
+            {bets.map((b, i) => (
+              <li key={i} className={`slip t-${b.type}`}>
+                <span
+                  className="pAvatar sm"
+                  style={{ background: PLAYER_COLORS[b.playerIdx % 6] }}
+                  title={players[b.playerIdx].name}
+                >
+                  {players[b.playerIdx].name.slice(0, 1)}
+                </span>
+                <span className="slipType">{BET_LABEL[b.type]}</span>
+                <span className="slipHorses">
+                  {b.horses.map((n) => `${n} ${byNum(n).name}`).join(" − ")}
+                </span>
+                <span className="slipAmt">{b.amount.toLocaleString()}pt</span>
+                <button className="slipDel" onClick={() => onRemoveBet(i)}>
+                  ✕
+                </button>
+              </li>
+            ))}
+            {!bets.length && (
+              <li className="muted slipNone">まだ馬券がないよ〜</li>
+            )}
+          </ul>
+          <div className="startRow">
+            <button className="btn ghost" onClick={onBackSetup}>
+              メンバー変更
+            </button>
+            <button className="btn primary big" onClick={onStart}>
+              🏇 レース発走！
+            </button>
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-// ---------------------------------------------------------------- レース
-const PXM = 7; // 1m = 7px
+// ---------------------------------------------------------------- レース描画
+const PXM = 7;
 const W = 960;
-const H = 500;
+const H = 540;
 const SIM_SPEED = 9;
+const TW = Math.PI * 2;
+
+const laneD = (num: number) => (num - 1) / 7;
+const laneGroundY = (num: number) => {
+  const d = laneD(num);
+  return 268 + 152 * d + 14 * d * d;
+};
+const laneScale = (num: number) => 0.62 + 0.46 * laneD(num);
+
+type SimHorse = Horse & { finishTime: number | null };
+type Particle = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  c: string;
+  s: number;
+};
 
 function RaceScreen({
   race,
   distance,
   onFinish,
 }: {
-  race: { horses: Horse[]; title: string };
+  race: RaceInfo;
   distance: number;
   onFinish: (order: Horse[]) => void;
 }) {
@@ -499,22 +648,23 @@ function RaceScreen({
   useEffect(() => {
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
-    // レース状態(コンポーネント外で管理)
-    const horses = race.horses.map((h) => ({ ...h, pos: 0, finishTime: null as number | null }));
-    let simT = -3; // 発走前カウントダウン3秒
+    const horses: SimHorse[] = race.horses.map((h) => ({
+      ...h,
+      pos: 0,
+      finishTime: null,
+    }));
+    let simT = -3.6;
     let last = performance.now();
     let raf = 0;
     let doneAt: number | null = null;
-    let spurtFlash = 0;
-    const decoRand = mulberry32(12345);
-    const crowd: { x: number; y: number; c: string }[] = [];
-    for (let i = 0; i < 700; i++) {
-      crowd.push({
-        x: decoRand() * 3000,
-        y: 38 + decoRand() * 50,
-        c: `hsl(${Math.floor(decoRand() * 360)},45%,${55 + decoRand() * 25}%)`,
-      });
-    }
+    let spurtT = 0;
+    let flashT = 0; // 1着ゴールの瞬間
+    let cam = -260;
+    let zoom = 1;
+    const parts: Particle[] = [];
+    const confetti: Particle[] = [];
+    const stand = buildStand();
+    const adWall = buildAdWall();
 
     const tick = (now: number) => {
       const dtReal = Math.min(0.05, (now - last) / 1000);
@@ -526,7 +676,7 @@ function RaceScreen({
         const dt = simT - Math.max(0, before);
         for (const h of horses) {
           if (h.finishTime !== null) {
-            h.pos += 15 * dt; // 流す
+            h.pos += 14 * dt;
             continue;
           }
           const progress = h.pos / distance;
@@ -538,31 +688,101 @@ function RaceScreen({
             Math.sin(simT * 1.31 + h.noiseSeed) * 0.22 +
             Math.sin(simT * 0.43 + h.noiseSeed * 2.7) * 0.18;
           if (progress > 0.74) {
-            v += h.spurt * Math.min(1, (progress - 0.74) / 0.13) * (h.ability / 82);
+            v +=
+              h.spurt * Math.min(1, (progress - 0.74) / 0.13) * (h.ability / 82);
           }
           const newPos = h.pos + v * dt;
-          if (newPos >= distance && h.finishTime === null) {
-            // ゴール通過時刻を線形補間
-            h.finishTime = simT - dt + dt * ((distance - h.pos) / (newPos - h.pos));
+          if (newPos >= distance) {
+            h.finishTime =
+              simT - dt + dt * ((distance - h.pos) / (newPos - h.pos));
+            if (flashT === 0) flashT = simT;
           }
           h.pos = newPos;
+          // 芝の蹴り上げ
+          if (Math.random() < 0.45) {
+            parts.push({
+              x: h.pos * PXM - 24 * laneScale(h.num) + Math.random() * 20,
+              y: laneGroundY(h.num) - Math.random() * 3,
+              vx: -90 - Math.random() * 110,
+              vy: -30 - Math.random() * 55,
+              life: 0.5 + Math.random() * 0.3,
+              c: Math.random() < 0.6 ? "#2f6e3c" : "#6e5230",
+              s: (1 + Math.random() * 1.6) * laneScale(h.num),
+            });
+          }
         }
-        const remaining = distance - Math.max(...horses.map((h) => h.pos));
-        if (remaining <= 400 && remaining > 0 && spurtFlash === 0) spurtFlash = simT;
+        const leaderPos = Math.max(...horses.map((h) => h.pos));
+        const remaining = distance - leaderPos;
+        if (remaining <= 420 && remaining > 0 && spurtT === 0) spurtT = simT;
         if (horses.every((h) => h.finishTime !== null) && doneAt === null) {
           doneAt = simT;
         }
-        if (doneAt !== null && simT - doneAt > 9) {
+        if (doneAt !== null && simT - doneAt > 30) {
           cancelAnimationFrame(raf);
-          const order = [...horses].sort(
-            (a, b) => a.finishTime! - b.finishTime!
+          onFinishRef.current(
+            [...horses].sort((a, b) => a.finishTime! - b.finishTime!)
           );
-          onFinishRef.current(order as Horse[]);
           return;
+        }
+        // 紙吹雪
+        if (flashT > 0 && simT - flashT < 5 && Math.random() < 0.8) {
+          for (let i = 0; i < 4; i++) {
+            confetti.push({
+              x: cam + Math.random() * W,
+              y: 40 + Math.random() * 120,
+              vx: -20 + Math.random() * 40,
+              vy: 30 + Math.random() * 50,
+              life: 2 + Math.random() * 2,
+              c: `hsl(${Math.floor(Math.random() * 360)},85%,65%)`,
+              s: 2 + Math.random() * 2.5,
+            });
+          }
         }
       }
 
-      draw(ctx, horses, simT, distance, race.title, crowd, spurtFlash, doneAt);
+      // パーティクル更新(実時間)
+      for (const arr of [parts, confetti]) {
+        for (let i = arr.length - 1; i >= 0; i--) {
+          const p = arr[i];
+          p.life -= dtReal * 1.6;
+          p.x += p.vx * dtReal;
+          p.y += p.vy * dtReal;
+          p.vy += (arr === parts ? 320 : 14) * dtReal;
+          if (p.life <= 0) arr.splice(i, 1);
+        }
+      }
+      if (parts.length > 260) parts.splice(0, parts.length - 260);
+
+      // カメラ & ズーム
+      const leaderPos = Math.max(...horses.map((h) => h.pos));
+      const remaining = Math.max(0, distance - leaderPos);
+      let target = Math.max(-260, leaderPos * PXM - W * 0.6);
+      target = Math.min(target, distance * PXM - W * 0.52 + 170);
+      cam += (target - cam) * Math.min(1, dtReal * 5.5);
+      const zTarget =
+        doneAt !== null
+          ? 1.0
+          : remaining < 500
+            ? 1 + 0.13 * (1 - remaining / 500)
+            : 1;
+      zoom += (zTarget - zoom) * Math.min(1, dtReal * 2.2);
+
+      frame(
+        ctx,
+        horses,
+        simT,
+        distance,
+        race,
+        cam,
+        zoom,
+        stand,
+        adWall,
+        parts,
+        confetti,
+        spurtT,
+        flashT,
+        doneAt
+      );
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -578,406 +798,798 @@ function RaceScreen({
         height={H}
         style={{ width: "100%", maxWidth: 960, borderRadius: 12 }}
       />
-      <p className="muted center">実況: 各馬一斉にスタート！ゴールまで見届けよう🔥</p>
     </section>
   );
 }
 
-type SimHorse = Horse & { finishTime: number | null };
+// スタンド(事前描画)
+function buildStand(): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = 1500;
+  c.height = 178;
+  const g = c.getContext("2d")!;
+  const rnd = mulberry32(424242);
+  // 屋根
+  const roof = g.createLinearGradient(0, 0, 0, 38);
+  roof.addColorStop(0, "#f2f4f8");
+  roof.addColorStop(1, "#c4cad4");
+  g.fillStyle = roof;
+  g.beginPath();
+  g.moveTo(-20, 40);
+  g.quadraticCurveTo(750, -14, 1520, 40);
+  g.lineTo(1520, 18);
+  g.quadraticCurveTo(750, -32, -20, 18);
+  g.closePath();
+  g.fill();
+  // 客席(内部)
+  const inner = g.createLinearGradient(0, 38, 0, 150);
+  inner.addColorStop(0, "#1f242e");
+  inner.addColorStop(1, "#3a4150");
+  g.fillStyle = inner;
+  g.fillRect(0, 38, 1500, 112);
+  // 段差ライン
+  g.strokeStyle = "rgba(255,255,255,0.08)";
+  for (let y = 56; y < 150; y += 18) {
+    g.beginPath();
+    g.moveTo(0, y);
+    g.lineTo(1500, y);
+    g.stroke();
+  }
+  // 観客
+  for (let i = 0; i < 1500; i++) {
+    g.fillStyle = `hsl(${Math.floor(rnd() * 360)},${35 + rnd() * 35}%,${50 + rnd() * 30}%)`;
+    g.fillRect(rnd() * 1500, 46 + rnd() * 100, 2.6, 3.6);
+  }
+  // 柱
+  g.fillStyle = "#8a93a3";
+  for (let x = 60; x < 1500; x += 240) {
+    g.fillRect(x, 30, 7, 122);
+  }
+  // 前面壁
+  const wall = g.createLinearGradient(0, 150, 0, 178);
+  wall.addColorStop(0, "#d6dae2");
+  wall.addColorStop(1, "#aab1bd");
+  g.fillStyle = wall;
+  g.fillRect(0, 150, 1500, 28);
+  g.fillStyle = "#7e8694";
+  for (let x = 0; x < 1500; x += 120) g.fillRect(x, 150, 2, 28);
+  return c;
+}
 
-function draw(
+// 広告壁(事前描画)
+function buildAdWall(): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = 900;
+  c.height = 26;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#14532d";
+  g.fillRect(0, 0, 900, 26);
+  g.fillStyle = "rgba(255,255,255,0.92)";
+  g.font = "bold 15px sans-serif";
+  g.textAlign = "center";
+  const ads = ["KEIBA ROYALE", "★ STAR DERBY ★", "TURF VISION", "GO! GO! UMA"];
+  ads.forEach((t, i) => g.fillText(t, 112 + i * 225, 18));
+  g.fillStyle = "rgba(255,255,255,0.25)";
+  for (let x = 0; x < 900; x += 225) g.fillRect(x, 2, 2, 22);
+  return c;
+}
+
+function frame(
   ctx: CanvasRenderingContext2D,
   horses: SimHorse[],
   simT: number,
   distance: number,
-  title: string,
-  crowd: { x: number; y: number; c: string }[],
-  spurtFlash: number,
+  race: RaceInfo,
+  cam: number,
+  zoom: number,
+  stand: HTMLCanvasElement,
+  adWall: HTMLCanvasElement,
+  parts: Particle[],
+  confetti: Particle[],
+  spurtT: number,
+  flashT: number,
   doneAt: number | null
 ) {
-  const leader = Math.max(...horses.map((h) => h.pos));
-  const leaderH = horses.find((h) => h.pos === leader)!;
-  let camX = Math.max(-200, leader * PXM - W * 0.62);
-  // ゴール後はゴール板にカメラ固定
-  camX = Math.min(camX, distance * PXM - W * 0.55 + 150);
-  const remaining = Math.max(0, distance - leader);
-  // ラストの直線で軽くカメラシェイク
-  if (remaining > 0 && remaining < 300) {
-    camX += Math.sin(simT * 47) * 2.2;
-  }
+  const ranking = [...horses].sort((a, b) =>
+    a.finishTime !== null || b.finishTime !== null
+      ? (a.finishTime ?? Infinity) - (b.finishTime ?? Infinity) ||
+        b.pos - a.pos
+      : b.pos - a.pos
+  );
+  const leaderH = ranking[0];
+  const leaderPos = Math.max(...horses.map((h) => h.pos));
+  const remaining = Math.max(0, distance - leaderPos);
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  // 最終直線ズーム
+  ctx.translate(W * 0.62, H * 0.52);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-W * 0.62, -H * 0.52);
+  // カメラシェイク
+  let shake = 0;
+  if (remaining > 0 && remaining < 280) shake = Math.sin(simT * 46) * 2;
+  ctx.translate(shake, 0);
 
   // ---- 空
-  const sky = ctx.createLinearGradient(0, 0, 0, 180);
-  sky.addColorStop(0, "#6fa8dc");
-  sky.addColorStop(1, "#cfe3f5");
+  const sky = ctx.createLinearGradient(0, 0, 0, 214);
+  sky.addColorStop(0, "#6ea7dd");
+  sky.addColorStop(1, "#dcebf8");
   ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, 180);
+  ctx.fillRect(-20, -20, W + 40, 240);
+  // 太陽光
+  const sun = ctx.createRadialGradient(W - 140, 10, 10, W - 140, 10, 220);
+  sun.addColorStop(0, "rgba(255,250,220,0.8)");
+  sun.addColorStop(1, "rgba(255,250,220,0)");
+  ctx.fillStyle = sun;
+  ctx.fillRect(W - 380, -20, 400, 240);
   // 雲
-  ctx.fillStyle = "rgba(255,255,255,0.75)";
-  for (let i = 0; i < 5; i++) {
-    const cx = ((i * 460 - camX * 0.06) % (W + 300)) - 150;
-    const cy = 28 + (i % 3) * 22;
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  for (let i = 0; i < 4; i++) {
+    const cx = ((i * 420 - cam * 0.05) % (W + 360)) - 180;
+    const cy = 16 + (i % 3) * 14;
     ctx.beginPath();
-    ctx.ellipse(cx, cy, 56, 13, 0, 0, Math.PI * 2);
-    ctx.ellipse(cx + 34, cy - 8, 36, 11, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, 60, 11, 0, 0, TW);
+    ctx.ellipse(cx + 38, cy - 7, 38, 9, 0, 0, TW);
     ctx.fill();
   }
 
-  // ---- スタンド(パララックス)
-  const standPar = 0.25;
-  const standW = 3000;
-  const sx = -((camX * standPar) % standW);
-  for (let r = -1; r <= 1; r++) {
-    const ox = sx + r * standW;
-    // 建物
-    ctx.fillStyle = "#b8bcc4";
-    ctx.fillRect(ox, 60, standW - 200, 80);
-    ctx.fillStyle = "#9aa0aa";
-    ctx.fillRect(ox, 52, standW - 200, 12);
-    // 屋根
-    ctx.fillStyle = "#e8eaee";
+  // ---- スタンド(パララックス 0.22)
+  const sw = stand.width;
+  const sx = -(((cam * 0.22) % sw) + sw) % sw;
+  ctx.drawImage(stand, sx, 36);
+  ctx.drawImage(stand, sx + sw, 36);
+  if (sx + sw * 2 < W) ctx.drawImage(stand, sx + sw * 2, 36);
+  // 歓声フリッカー(最終直線&ゴール後)
+  if ((remaining < 450 && simT > 0) || flashT > 0) {
+    for (let i = 0; i < 50; i++) {
+      ctx.fillStyle = `hsla(${Math.floor(Math.random() * 360)},90%,75%,0.9)`;
+      ctx.fillRect(Math.random() * W, 82 + Math.random() * 96, 2.6, 3.6);
+    }
+  }
+
+  // ---- 広告壁(パララックス 0.55)
+  const aw = adWall.width;
+  const ax = -(((cam * 0.55) % aw) + aw) % aw;
+  for (let x = ax; x < W; x += aw) ctx.drawImage(adWall, x, 214);
+
+  // ---- 奥の芝エプロン
+  ctx.fillStyle = "#1d6437";
+  ctx.fillRect(-20, 240, W + 40, 14);
+
+  // ---- ターフ(横向き刈り分けバンド)
+  const bands = [16, 20, 24, 28, 33, 38, 44, 50, 58, 70];
+  let by = 254;
+  let bi = 0;
+  for (const bh of bands) {
+    ctx.fillStyle = bi % 2 ? "#2f8c4e" : "#278145";
+    ctx.fillRect(-20, by, W + 40, bh);
+    by += bh;
+    bi++;
+  }
+  if (by < H + 20) {
+    ctx.fillStyle = bi % 2 ? "#2f8c4e" : "#278145";
+    ctx.fillRect(-20, by, W + 40, H + 20 - by);
+  }
+  // 薄い縦のスピード筋
+  ctx.fillStyle = "rgba(255,255,255,0.04)";
+  for (let x = -((cam % 140) + 140); x < W + 60; x += 140) {
     ctx.beginPath();
-    ctx.moveTo(ox - 14, 60);
-    ctx.lineTo(ox + standW - 186, 60);
-    ctx.lineTo(ox + standW - 220, 38);
-    ctx.lineTo(ox + 20, 38);
+    ctx.moveTo(x, 254);
+    ctx.lineTo(x + 26, H);
+    ctx.lineTo(x + 50, H);
+    ctx.lineTo(x + 18, 254);
     ctx.closePath();
     ctx.fill();
-    // 観客
-    for (const c of crowd) {
-      const px = ox + c.x;
-      if (px < -10 || px > W + 10) continue;
-      ctx.fillStyle = c.c;
-      ctx.fillRect(px, c.y + 50, 3, 4);
-    }
   }
-
-  // ---- 芝生(刈り模様)
-  ctx.fillStyle = "#2c8a4a";
-  ctx.fillRect(0, 180, W, H - 180);
-  const stripeW = 70;
-  for (let x = -((camX % (stripeW * 2)) + stripeW * 2); x < W + stripeW; x += stripeW * 2) {
-    ctx.fillStyle = "rgba(0,0,0,0.07)";
-    ctx.fillRect(x, 180, stripeW, H - 180);
-  }
-  // 奥の芝の色変化
-  const turfGrad = ctx.createLinearGradient(0, 180, 0, H);
-  turfGrad.addColorStop(0, "rgba(255,255,200,0.10)");
-  turfGrad.addColorStop(1, "rgba(0,40,0,0.18)");
-  ctx.fillStyle = turfGrad;
-  ctx.fillRect(0, 180, W, H - 180);
 
   // ---- 内ラチ(白柵)
-  ctx.fillStyle = "#f4f4f0";
-  ctx.fillRect(0, 196, W, 5);
-  for (let x = -(camX % 46); x < W; x += 46) {
-    ctx.fillRect(x, 186, 4, 15);
+  ctx.fillStyle = "#f5f5f0";
+  ctx.fillRect(-20, 247, W + 40, 4.5);
+  ctx.fillStyle = "#e3e3da";
+  for (let x = -(((cam % 38) + 38) % 38); x < W; x += 38) {
+    ctx.fillRect(x, 240, 3, 12);
   }
 
-  // ---- ハロン棒(残り距離標識)
+  // ---- ハロン棒
   ctx.textAlign = "center";
   for (let m = 200; m < distance; m += 200) {
-    const x = (distance - m) * PXM - camX;
+    const x = (distance - m) * PXM - cam;
     if (x < -40 || x > W + 40) continue;
     ctx.fillStyle = "#fff";
-    ctx.fillRect(x - 2, 168, 4, 34);
-    ctx.fillStyle = m % 400 === 0 ? "#d33" : "#2a6";
+    ctx.fillRect(x - 1.5, 222, 3, 28);
+    ctx.fillStyle = m % 400 === 0 ? "#d33545" : "#2a9d5c";
     ctx.beginPath();
-    ctx.arc(x, 162, 13, 0, Math.PI * 2);
+    ctx.arc(x, 216, 11, 0, TW);
     ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 10px sans-serif";
-    ctx.fillText(`${m}`, x, 166);
+    ctx.font = "bold 9px sans-serif";
+    ctx.fillText(`${m}`, x, 219.5);
   }
 
-  // ---- スタートゲート
-  const gateX = -camX;
-  if (gateX > -120 && gateX < W + 60) {
-    ctx.fillStyle = "#3c4754";
-    ctx.fillRect(gateX - 60, 150, 14, 330);
-    ctx.fillStyle = "#5a6b7d";
-    for (let i = 0; i < 8; i++) {
-      ctx.fillRect(gateX - 54, 208 + i * 33, 50, 4);
-    }
+  // ---- スタートゲート(遠景)
+  const gateX = -cam;
+  if (gateX > -160 && gateX < W + 80) {
+    ctx.fillStyle = "#37414d";
+    ctx.fillRect(gateX - 86, 206, 80, 46);
+    ctx.fillStyle = "#222a33";
+    for (let i = 0; i < 8; i++) ctx.fillRect(gateX - 82 + i * 10, 210, 7, 40);
+    ctx.fillStyle = "#4d5a68";
+    ctx.fillRect(gateX - 90, 200, 88, 8);
   }
 
-  // ---- ゴール板
-  const goalX = distance * PXM - camX;
-  if (goalX > -80 && goalX < W + 80) {
-    ctx.fillStyle = "#222";
-    ctx.fillRect(goalX, 130, 6, 350);
-    // チェッカー円盤
+  // ---- ゴール
+  const gx = distance * PXM - cam;
+  if (gx > -120 && gx < W + 120) {
+    // ゴールライン(白・少し斜めで奥行き)
+    ctx.strokeStyle = "rgba(255,255,255,0.92)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(gx, 252);
+    ctx.lineTo(gx + 16, H);
+    ctx.stroke();
+    // ゴール板(遠側)
+    ctx.fillStyle = "#1c1c1c";
+    ctx.fillRect(gx - 2, 168, 5, 84);
     for (let i = 0; i < 16; i++) {
       ctx.fillStyle = i % 2 ? "#111" : "#fff";
       ctx.beginPath();
-      ctx.moveTo(goalX + 3, 150);
-      ctx.arc(goalX + 3, 150, 22, (i * Math.PI) / 8, ((i + 1) * Math.PI) / 8);
+      ctx.moveTo(gx + 0.5, 184);
+      ctx.arc(gx + 0.5, 184, 17, (i * Math.PI) / 8, ((i + 1) * Math.PI) / 8);
       ctx.closePath();
       ctx.fill();
     }
     ctx.fillStyle = "#c0392b";
-    ctx.fillRect(goalX - 36, 175, 78, 18);
+    ctx.fillRect(gx - 32, 204, 66, 15);
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 12px sans-serif";
-    ctx.fillText("GOAL", goalX + 3, 188);
+    ctx.font = "bold 11px sans-serif";
+    ctx.fillText("GOAL", gx + 1, 215.5);
   }
 
-  // ---- 馬たち(奥のレーンから描画)
-  const laneTop = 225;
-  const laneGap = 31;
+  // ---- 芝の蹴り上げ
+  for (const p of parts) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 1.6));
+    ctx.fillStyle = p.c;
+    ctx.fillRect(p.x - cam, p.y, p.s, p.s);
+  }
+  ctx.globalAlpha = 1;
+
+  // ---- 馬(奥レーンから手前へ)
+  const spurting = spurtT > 0 && remaining > 0;
   for (const h of horses) {
-    const x = h.pos * PXM - camX;
-    const y = laneTop + (h.num - 1) * laneGap;
-    if (x < -120 || x > W + 120) continue;
-    drawHorse(ctx, x, y, h, simT);
+    const sc = laneScale(h.num);
+    const x = h.pos * PXM - cam;
+    if (x < -140 || x > W + 140) continue;
+    const y = laneGroundY(h.num) - 27 * sc;
+    // スピードライン
+    if (spurting && h.finishTime === null) {
+      ctx.strokeStyle = "rgba(255,255,255,0.14)";
+      ctx.lineWidth = 2;
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.moveTo(x - 38 * sc, y + i * 9 * sc);
+        ctx.lineTo(x - (66 + Math.random() * 18) * sc, y + i * 9 * sc);
+        ctx.stroke();
+      }
+    }
+    drawHorse(ctx, x, y, h, simT, sc, spurting);
   }
 
-  // ---- HUD
-  ctx.fillStyle = "rgba(10,14,20,0.72)";
-  ctx.fillRect(0, 0, W, 30);
+  // ---- 手前を流れる柵ポール(スピード感)
+  ctx.fillStyle = "rgba(244,244,238,0.3)";
+  for (let x = -(((cam * 1.22) % 430) + 430) % 430; x < W + 30; x += 430) {
+    ctx.fillRect(x, H - 90, 9, 90);
+    ctx.fillStyle = "rgba(244,244,238,0.16)";
+    ctx.fillRect(x - 7, H - 90, 23, 90);
+    ctx.fillStyle = "rgba(244,244,238,0.3)";
+  }
+
+  // ---- 紙吹雪
+  for (const p of confetti) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
+    ctx.fillStyle = p.c;
+    ctx.fillRect(p.x - cam, p.y, p.s, p.s * 0.7);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore(); // ズーム解除
+
+  // ---- 写真判定フラッシュ
+  if (flashT > 0 && simT - flashT < 0.45) {
+    ctx.fillStyle = `rgba(255,255,255,${0.75 * (1 - (simT - flashT) / 0.45)})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // ================= HUD =================
+  // 上部バー
+  const bar = ctx.createLinearGradient(0, 0, 0, 34);
+  bar.addColorStop(0, "rgba(8,12,18,0.92)");
+  bar.addColorStop(1, "rgba(8,12,18,0.65)");
+  ctx.fillStyle = bar;
+  ctx.fillRect(0, 0, W, 34);
   ctx.fillStyle = "#f0d979";
   ctx.font = "bold 14px sans-serif";
   ctx.textAlign = "left";
-  ctx.fillText(title, 12, 20);
-  ctx.fillStyle = "#fff";
+  ctx.fillText(race.title, 12, 22);
   ctx.textAlign = "right";
-  ctx.fillText(
-    remaining > 0 ? `残り ${Math.ceil(remaining)}m` : "ゴール！",
-    W - 12,
-    20
-  );
+  if (remaining > 0) {
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText(`残り ${Math.ceil(remaining)}m`, W - 12, 23);
+  } else {
+    ctx.fillStyle = "#ffd34d";
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText("GOAL!", W - 12, 23);
+  }
 
-  // 現在の順位(上位5頭)
-  if (simT > 0) {
-    const ranking = [...horses].sort((a, b) =>
-      a.finishTime !== null && b.finishTime !== null
-        ? a.finishTime - b.finishTime
-        : b.pos - a.pos
-    );
+  // ライブ順位(左)
+  if (simT > 0.5) {
     ctx.textAlign = "left";
-    ctx.font = "bold 12px sans-serif";
     for (let i = 0; i < 5; i++) {
       const h = ranking[i];
-      const bx = 12,
-        by = 44 + i * 24;
-      ctx.fillStyle = "rgba(10,14,20,0.6)";
-      ctx.fillRect(bx - 4, by - 13, 158, 19);
+      const bx = 10,
+        byy = 52 + i * 25;
+      ctx.fillStyle = "rgba(8,12,18,0.66)";
+      roundRect(ctx, bx - 4, byy - 14, 168, 21, 5);
+      ctx.fill();
       ctx.fillStyle = WAKU_COLORS[h.num - 1];
-      ctx.fillRect(bx, by - 10, 13, 13);
+      roundRect(ctx, bx, byy - 11, 15, 15, 3);
+      ctx.fill();
       ctx.fillStyle = WAKU_TEXT[h.num - 1];
       ctx.font = "bold 10px sans-serif";
-      ctx.fillText(`${h.num}`, bx + 3.5, by);
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 11px sans-serif";
-      ctx.fillText(`${i + 1}. ${h.name}`, bx + 18, by);
+      ctx.fillText(`${h.num}`, bx + 4, byy + 1);
+      ctx.fillStyle = i === 0 ? "#ffd34d" : "#fff";
+      ctx.font = "bold 12px sans-serif";
+      ctx.fillText(`${i + 1} ${h.name}`, bx + 21, byy + 1);
     }
   }
 
-  // ---- ミニマップ
-  ctx.fillStyle = "rgba(10,14,20,0.6)";
-  ctx.fillRect(180, H - 26, W - 360, 16);
-  ctx.strokeStyle = "#888";
-  ctx.strokeRect(180, H - 26, W - 360, 16);
+  // 実況テロップ
+  if (simT > 0) {
+    const p = leaderPos / distance;
+    let live = "";
+    if (doneAt !== null || remaining <= 0) {
+      live = `ゴールイン！ 勝ったのは ${ranking[0].num}番 ${ranking[0].name}！`;
+    } else if (p < 0.08) {
+      live = "ゲートが開いた！各馬一斉にスタート！";
+    } else if (p < 0.45) {
+      live = `先頭は ${leaderH.name}！ ${ranking[1].name} が続く展開！`;
+    } else if (p < 0.74) {
+      live = `中盤の攻防！ ${leaderH.name} がリードを守る！`;
+    } else {
+      live = `最後の直線！ ${leaderH.name} が粘る！ ${ranking[1].name} が迫る！`;
+    }
+    const lg = ctx.createLinearGradient(0, H - 64, 0, H - 34);
+    lg.addColorStop(0, "rgba(8,12,18,0)");
+    lg.addColorStop(1, "rgba(8,12,18,0.85)");
+    ctx.fillStyle = lg;
+    ctx.fillRect(0, H - 64, W, 30);
+    ctx.fillStyle = "rgba(8,12,18,0.85)";
+    ctx.fillRect(0, H - 34, W, 34);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 15px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(`🎙 ${live}`, 14, H - 12);
+  }
+
+  // ミニマップ(右下)
+  const mmX = W - 270,
+    mmW = 250,
+    mmY = H - 22;
+  ctx.fillStyle = "rgba(8,12,18,0.7)";
+  roundRect(ctx, mmX - 8, mmY - 9, mmW + 26, 18, 8);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(mmX, mmY);
+  ctx.lineTo(mmX + mmW, mmY);
+  ctx.stroke();
   for (const h of horses) {
-    const mx = 180 + Math.min(1, h.pos / distance) * (W - 360);
+    const mx = mmX + Math.min(1, h.pos / distance) * mmW;
     ctx.fillStyle = WAKU_COLORS[h.num - 1];
     ctx.beginPath();
-    ctx.arc(mx, H - 18, 4, 0, Math.PI * 2);
+    ctx.arc(mx, mmY, 3.4, 0, TW);
     ctx.fill();
   }
-  ctx.fillStyle = "#fff";
-  ctx.font = "10px sans-serif";
-  ctx.textAlign = "left";
-  ctx.fillText("S", 168, H - 14);
-  ctx.fillText("G", W - 174, H - 14);
+  ctx.fillStyle = "#aaa";
+  ctx.font = "9px sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillText("G", mmX + mmW + 12, mmY + 3);
 
-  // ---- 演出テキスト
-  ctx.textAlign = "center";
+  // ---- 発走前: 出走表オーバーレイ
   if (simT < 0) {
-    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillStyle = "rgba(5,8,14,0.78)";
     ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 64px sans-serif";
-    ctx.fillText(`${Math.ceil(-simT)}`, W / 2, H / 2);
-    ctx.font = "bold 22px sans-serif";
-    ctx.fillText("まもなく発走…ファンファーレ🎺", W / 2, H / 2 + 50);
-  } else if (simT < 1.2) {
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 44px sans-serif";
-    ctx.strokeStyle = "rgba(0,0,0,0.6)";
-    ctx.lineWidth = 6;
-    ctx.strokeText("スタート！", W / 2, 120);
-    ctx.fillText("スタート！", W / 2, 120);
-  }
-  if (spurtFlash > 0 && simT - spurtFlash < 1.6 && remaining > 0) {
-    const a = 1 - (simT - spurtFlash) / 1.6;
-    ctx.fillStyle = `rgba(255,215,0,${a})`;
-    ctx.font = "bold 40px sans-serif";
-    ctx.strokeStyle = `rgba(120,40,0,${a})`;
-    ctx.lineWidth = 5;
-    ctx.strokeText("🔥 最後の直線！ラストスパート！", W / 2, 120);
-    ctx.fillText("🔥 最後の直線！ラストスパート！", W / 2, 120);
-  }
-  if (doneAt !== null) {
-    const ranking = [...horses].sort((a, b) => a.finishTime! - b.finishTime!);
-    const win = ranking[0];
-    const margin = ranking[1].finishTime! - win.finishTime!;
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(W / 2 - 280, 60, 560, 92);
+    ctx.textAlign = "center";
     ctx.fillStyle = "#f0d979";
-    ctx.font = "bold 30px sans-serif";
-    ctx.fillText(
-      margin < 0.08 ? "📸 写真判定…！" : "🏆 確定！",
-      W / 2,
-      96
-    );
+    ctx.font = "bold 26px sans-serif";
+    ctx.fillText(race.title, W / 2, 70);
+    ctx.fillStyle = "#ccc";
+    ctx.font = "13px sans-serif";
+    ctx.fillText("― 出走馬 ―", W / 2, 100);
+    ctx.textAlign = "left";
+    horses.forEach((h, i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const x = W / 2 - 330 + col * 350;
+      const y = 136 + row * 44;
+      ctx.fillStyle = "rgba(255,255,255,0.06)";
+      roundRect(ctx, x, y - 22, 320, 34, 7);
+      ctx.fill();
+      ctx.fillStyle = WAKU_COLORS[h.num - 1];
+      roundRect(ctx, x + 8, y - 15, 20, 20, 4);
+      ctx.fill();
+      ctx.fillStyle = WAKU_TEXT[h.num - 1];
+      ctx.font = "bold 12px sans-serif";
+      ctx.fillText(`${h.num}`, x + 14, y);
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 15px sans-serif";
+      ctx.fillText(h.name, x + 36, y + 1);
+      ctx.fillStyle = "#f0d979";
+      ctx.textAlign = "right";
+      ctx.fillText(`${h.odds.toFixed(1)}倍`, x + 310, y + 1);
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#8a96a3";
+      ctx.font = "10px sans-serif";
+      ctx.fillText(h.style, x + 36 + ctx.measureText(h.name).width + 110, y + 1);
+    });
+    ctx.textAlign = "center";
     ctx.fillStyle = "#fff";
-    ctx.font = "bold 22px sans-serif";
+    ctx.font = "bold 58px sans-serif";
+    ctx.fillText(`${Math.ceil(-simT)}`, W / 2, H - 64);
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillStyle = "#f0d979";
+    ctx.fillText("ファンファーレ🎺 まもなく発走！", W / 2, H - 26);
+  } else if (simT < 1.1) {
+    ctx.textAlign = "center";
+    ctx.font = "bold 46px sans-serif";
+    ctx.strokeStyle = "rgba(0,0,0,0.65)";
+    ctx.lineWidth = 7;
+    ctx.strokeText("スタート！", W / 2, 130);
+    ctx.fillStyle = "#fff";
+    ctx.fillText("スタート！", W / 2, 130);
+  }
+  if (spurtT > 0 && simT - spurtT < 1.7 && remaining > 0) {
+    const a = 1 - (simT - spurtT) / 1.7;
+    ctx.textAlign = "center";
+    ctx.font = "bold 38px sans-serif";
+    ctx.strokeStyle = `rgba(120,40,0,${a})`;
+    ctx.lineWidth = 6;
+    ctx.strokeText("🔥 最後の直線！", W / 2, 120);
+    ctx.fillStyle = `rgba(255,213,77,${a})`;
+    ctx.fillText("🔥 最後の直線！", W / 2, 120);
+  }
+  if (flashT > 0 && simT - flashT > 6) {
+    const win = ranking[0];
+    const second = ranking[1].finishTime;
+    const margin = second === null ? 1 : second - win.finishTime!;
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    roundRect(ctx, W / 2 - 290, 56, 580, 96, 12);
+    ctx.fill();
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#f0d979";
+    ctx.font = "bold 28px sans-serif";
+    ctx.fillText(margin < 0.08 ? "📸 写真判定…！" : "🏆 1着確定！", W / 2, 94);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 21px sans-serif";
     ctx.fillText(
-      `1着 ${win.num}番 ${win.name}  (${formatTime(win.finishTime!)})`,
+      `${win.num}番 ${win.name}  ${formatTime(win.finishTime!)}`,
       W / 2,
-      132
+      130
     );
   }
 }
 
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// ---- リアル寄りの馬体描画(横向き・4拍ギャロップ)
 function drawHorse(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   h: SimHorse,
-  simT: number
+  simT: number,
+  sc: number,
+  spurting: boolean
 ) {
   const running = simT > 0 && h.finishTime === null;
-  const phase = h.pos * 0.42 + h.noiseSeed;
-  const bob = running ? Math.sin(phase * 2) * 1.6 : 0;
-  const wc = WAKU_COLORS[h.num - 1];
+  const cooling = h.finishTime !== null;
+  const t = (((h.pos * 0.155 + h.noiseSeed) % 1) + 1) % 1;
+  const bob = running ? Math.sin(t * TW) * 2.4 : cooling ? Math.sin(t * TW) * 1 : 0;
+  const pitch = running ? Math.sin(t * TW + 0.6) * 0.05 : 0;
+  const rawWc = WAKU_COLORS[h.num - 1];
+  const wc = rawWc === "#ffffff" ? "#e2e2e6" : rawWc;
+
+  const coat = h.coat;
+  const dark = shade(coat, -28);
+  const darker = shade(coat, -48);
+  const hasSock = (h.noiseSeed * 13) % 1 < 0.32;
+  const hasBlaze = (h.noiseSeed * 7) % 1 < 0.3;
 
   ctx.save();
-  ctx.translate(x, y + bob);
+  ctx.translate(x, y);
+  ctx.scale(sc, sc);
 
   // 影
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fillStyle = "rgba(0,0,0,0.26)";
   ctx.beginPath();
-  ctx.ellipse(0, 21 - bob, 30, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 27, 34, 4.6, 0, 0, TW);
   ctx.fill();
 
-  // ---- 脚(4本・ギャロップ)
-  const legColor = shade(h.coat, -18);
-  ctx.strokeStyle = legColor;
-  ctx.lineWidth = 4;
-  ctx.lineCap = "round";
-  const legs = [
-    { ox: -16, p: phase },
-    { ox: -11, p: phase + 0.9 },
-    { ox: 12, p: phase + Math.PI },
-    { ox: 17, p: phase + Math.PI + 0.9 },
-  ];
-  for (const leg of legs) {
-    const swing = running ? Math.sin(leg.p) : 0;
-    const lift = running ? Math.max(0, Math.cos(leg.p)) : 0;
-    const kneeX = leg.ox + swing * 7;
-    const kneeY = 11 - lift * 3;
-    const hoofX = kneeX + swing * 7;
-    const hoofY = 20 - lift * 6;
+  ctx.translate(0, bob);
+  ctx.rotate(pitch);
+
+  const grad = ctx.createLinearGradient(0, -16, 0, 16);
+  grad.addColorStop(0, shade(coat, 24));
+  grad.addColorStop(0.55, coat);
+  grad.addColorStop(1, dark);
+
+  const slow = running || cooling;
+  const leg = (
+    hipX: number,
+    hipY: number,
+    front: boolean,
+    phase: number,
+    col: string
+  ) => {
+    const tt = (t + phase) % 1;
+    const sw = slow ? Math.sin(tt * TW) : 0;
+    const fold = slow ? Math.max(0, Math.sin(tt * TW + 2.1)) : 0;
+    const u = front ? sw * 0.95 - 0.08 : sw * 0.85 + 0.05;
+    const l = front ? u - fold * 1.25 : u + fold * 0.95;
+    const ul = front ? 12.5 : 13.5;
+    const ll = 12.5;
+    const kx = hipX + Math.sin(u) * ul;
+    const ky = hipY + Math.cos(u) * ul;
+    const fx = kx + Math.sin(l) * ll;
+    const fy = ky + Math.cos(l) * ll;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = col;
+    ctx.lineWidth = front ? 4.6 : 5.4;
     ctx.beginPath();
-    ctx.moveTo(leg.ox, 4);
-    ctx.lineTo(kneeX, kneeY);
-    ctx.lineTo(hoofX, hoofY);
+    ctx.moveTo(hipX, hipY);
+    ctx.lineTo(kx, ky);
+    ctx.stroke();
+    ctx.strokeStyle = hasSock ? "#e8e4da" : col;
+    ctx.lineWidth = front ? 3.2 : 3.6;
+    ctx.beginPath();
+    ctx.moveTo(kx, ky);
+    ctx.lineTo(fx, fy);
+    ctx.stroke();
+    ctx.fillStyle = "#1a130e";
+    ctx.beginPath();
+    ctx.ellipse(fx + 0.6, fy + 0.8, 2.6, 1.8, 0.3, 0, TW);
+    ctx.fill();
+  };
+
+  // 奥側の脚
+  leg(17, 3, true, 0.62, darker);
+  leg(-19, 1, false, 0.13, darker);
+
+  // 尻尾(3本のなびく束)
+  const flut = running ? Math.sin(simT * 9 + h.noiseSeed) : 0;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 3; i++) {
+    ctx.strokeStyle = i === 1 ? shade(coat, -55) : darker;
+    ctx.lineWidth = 4 - i;
+    ctx.beginPath();
+    ctx.moveTo(-30, -7 + i * 2);
+    ctx.quadraticCurveTo(
+      -42 - i * 2,
+      -4 + flut * 2.5 + i * 3,
+      -46 - i * 3,
+      6 + flut * 3 + i * 4
+    );
     ctx.stroke();
   }
 
-  // ---- 尻尾
-  ctx.strokeStyle = shade(h.coat, -30);
-  ctx.lineWidth = 5;
+  // 胴体(ベジェ曲線)
+  ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.moveTo(-23, -4);
-  ctx.quadraticCurveTo(
-    -33,
-    -2 + (running ? Math.sin(phase) * 3 : 0),
-    -35,
-    8 + (running ? Math.cos(phase * 1.3) * 3 : 0)
-  );
-  ctx.stroke();
-
-  // ---- 胴体
-  ctx.fillStyle = h.coat;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 24, 10, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // 胸・後躯の膨らみ
-  ctx.beginPath();
-  ctx.ellipse(16, 1, 9, 8.5, 0, 0, Math.PI * 2);
-  ctx.ellipse(-15, -1, 10, 9, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // ---- 首・頭
-  ctx.beginPath();
-  ctx.moveTo(15, -6);
-  ctx.quadraticCurveTo(24, -14, 30, -16);
-  ctx.lineTo(34, -10);
-  ctx.quadraticCurveTo(26, -4, 20, 2);
+  ctx.moveTo(-31, -8);
+  ctx.bezierCurveTo(-35, 0, -31, 9, -22, 12);
+  ctx.bezierCurveTo(-10, 15.5, 6, 15.5, 16, 12);
+  ctx.bezierCurveTo(25, 9, 30, 3, 30, -4);
+  ctx.bezierCurveTo(30, -8, 28, -10, 24, -11);
+  ctx.bezierCurveTo(14, -13.5, 0, -14, -12, -12.5);
+  ctx.bezierCurveTo(-22, -11.5, -28, -11, -31, -8);
   ctx.closePath();
   ctx.fill();
+  // 後躯の筋肉ハイライト
+  ctx.fillStyle = "rgba(255,255,255,0.07)";
+  ctx.beginPath();
+  ctx.ellipse(-18, -3, 10, 8, 0.2, 0, TW);
+  ctx.fill();
+
+  // 首(伸縮あり)
+  const headX = 40 + (running ? Math.sin(t * TW + 0.7) * 2 : 0);
+  const headY = -20 + (running ? Math.sin(t * TW) * 1.6 : 2);
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 13;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(14, -7);
+  ctx.lineTo(headX - 4, headY + 1);
+  ctx.stroke();
+
   // 頭部
+  ctx.save();
+  ctx.translate(headX, headY);
+  ctx.rotate(-0.32);
+  ctx.fillStyle = coat;
   ctx.beginPath();
-  ctx.ellipse(34, -14, 8, 4.5, -0.35, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 9.5, 4.6, 0, 0, TW);
   ctx.fill();
-  // 耳
+  ctx.fillStyle = shade(coat, -12);
   ctx.beginPath();
-  ctx.moveTo(30, -18);
-  ctx.lineTo(31.5, -23);
-  ctx.lineTo(34, -18.5);
+  ctx.ellipse(8, 1.2, 4.5, 3, 0.1, 0, TW);
+  ctx.fill();
+  if (hasBlaze) {
+    ctx.strokeStyle = "rgba(245,243,238,0.9)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-3, -2.6);
+    ctx.lineTo(9.5, 0.6);
+    ctx.stroke();
+  }
+  // 耳
+  ctx.fillStyle = coat;
+  ctx.beginPath();
+  ctx.moveTo(-6, -3.4);
+  ctx.lineTo(-4.6, -8.4);
+  ctx.lineTo(-2.2, -3.8);
+  ctx.closePath();
+  ctx.moveTo(-2.6, -3.8);
+  ctx.lineTo(-0.8, -8);
+  ctx.lineTo(1.2, -3.6);
   ctx.closePath();
   ctx.fill();
-  // たてがみ
-  ctx.strokeStyle = shade(h.coat, -35);
-  ctx.lineWidth = 3;
+  // 目
+  ctx.fillStyle = "#16100b";
   ctx.beginPath();
-  ctx.moveTo(28, -16);
-  ctx.quadraticCurveTo(20, -10, 16, -4);
+  ctx.arc(-1.6, -1.4, 1.1, 0, TW);
+  ctx.fill();
+  // 鼻革
+  ctx.strokeStyle = "rgba(30,22,14,0.55)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(3.6, -3.4);
+  ctx.lineTo(5.4, 3.4);
+  ctx.stroke();
+  ctx.restore();
+
+  // たてがみ
+  ctx.strokeStyle = shade(coat, -52);
+  for (let i = 0; i < 4; i++) {
+    const p = i / 3;
+    const mx = 14 + (headX - 6 - 14) * p;
+    const my = -10 + (headY - 4 + 10) * p;
+    ctx.lineWidth = 2.4 - i * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(mx, my);
+    ctx.quadraticCurveTo(
+      mx - 5,
+      my - 1 + (running ? Math.sin(simT * 11 + i) * 1.6 : 0),
+      mx - 8,
+      my + 4
+    );
+    ctx.stroke();
+  }
+
+  // 腹帯
+  ctx.strokeStyle = "rgba(235,235,225,0.55)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-2, -2);
+  ctx.lineTo(-1, 14.5);
   ctx.stroke();
 
-  // ---- ゼッケン
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(-8, -8, 14, 12);
-  ctx.strokeStyle = "#999";
+  // ゼッケン
+  ctx.fillStyle = "#fafaf6";
+  roundRect(ctx, -11, -13, 14, 14, 2.5);
+  ctx.fill();
+  ctx.strokeStyle = "#b9b9ae";
   ctx.lineWidth = 1;
-  ctx.strokeRect(-8, -8, 14, 12);
-  ctx.fillStyle = "#111";
-  ctx.font = "bold 10px sans-serif";
+  ctx.stroke();
+  ctx.fillStyle = "#16100b";
+  ctx.font = "bold 9px sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(`${h.num}`, -1, 2);
+  ctx.fillText(`${h.num}`, -4, -2.5);
+
+  // 手前側の脚
+  leg(15, 4, true, 0.5, dark);
+  leg(-17, 2, false, 0.0, dark);
 
   // ---- 騎手
-  const jLean = running ? 0.15 + Math.sin(phase * 2) * 0.04 : 0.1;
-  ctx.save();
-  ctx.translate(-1, -12);
-  ctx.rotate(-jLean - 0.5);
-  // 胴体(勝負服 = 枠色)
-  ctx.fillStyle = wc === "#ffffff" ? "#dcdcdc" : wc;
-  ctx.fillRect(-3, -12, 7, 13);
-  ctx.restore();
-  // ヘルメット
+  const pump = running ? Math.sin(t * TW) * 0.8 : 0;
+  // 近側の脚
+  ctx.strokeStyle = "#f3f3ec";
+  ctx.lineWidth = 3.4;
+  ctx.beginPath();
+  ctx.moveTo(7, -13);
+  ctx.lineTo(13.5, -9.5);
+  ctx.lineTo(10.5, -4);
+  ctx.stroke();
+  ctx.strokeStyle = "#241a12";
+  ctx.lineWidth = 3.4;
+  ctx.beginPath();
+  ctx.moveTo(10.8, -4.8);
+  ctx.lineTo(11.6, -1.6);
+  ctx.stroke();
+  // 胴体(勝負服)
+  ctx.strokeStyle = wc;
+  ctx.lineWidth = 7.4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(5.5, -13.5);
+  ctx.lineTo(14.5 + pump * 0.6, -21 + pump * 0.5);
+  ctx.stroke();
+  // 袖
+  ctx.strokeStyle = shade(wc, -28);
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(13.5, -19.5);
+  ctx.lineTo(20.5, -14.5);
+  ctx.stroke();
+  // 手
+  ctx.fillStyle = "#d8a47f";
+  ctx.beginPath();
+  ctx.arc(21, -14.3, 1.7, 0, TW);
+  ctx.fill();
+  // 手綱
+  ctx.strokeStyle = "rgba(50,34,20,0.85)";
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(21, -14.3);
+  ctx.lineTo(headX - 2, headY + 2.6);
+  ctx.stroke();
+  // ムチ(ラストスパート時)
+  if (spurting && h.finishTime === null) {
+    const wa = Math.sin(simT * 15 + h.num * 1.7) * 0.9 - 0.6;
+    ctx.strokeStyle = "#6b4a2f";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(21, -14.3);
+    ctx.lineTo(21 - Math.cos(wa) * 11, -14.3 - Math.sin(wa) * 11 - 5);
+    ctx.stroke();
+  }
+  // 頭(あご→ヘルメット)
+  ctx.fillStyle = "#d8a47f";
+  ctx.beginPath();
+  ctx.arc(17.6, -21.6, 2, 0, TW);
+  ctx.fill();
   ctx.fillStyle = wc;
-  ctx.strokeStyle = "#333";
+  ctx.strokeStyle = "#1c1c1c";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.arc(5, -23, 4.5, 0, Math.PI * 2);
+  ctx.arc(17.8, -23.6, 3.9, 0, TW);
   ctx.fill();
   ctx.stroke();
-  // 腕→手綱
-  ctx.strokeStyle = "#5a4632";
-  ctx.lineWidth = 2.5;
+  // ゴーグル
+  ctx.strokeStyle = "#101418";
+  ctx.lineWidth = 1.6;
   ctx.beginPath();
-  ctx.moveTo(4, -16);
-  ctx.lineTo(16, -10);
-  ctx.stroke();
-  ctx.strokeStyle = "rgba(60,40,20,0.8)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(16, -10);
-  ctx.lineTo(31, -13);
+  ctx.moveTo(16, -22.6);
+  ctx.lineTo(21.4, -23.2);
   ctx.stroke();
 
   ctx.restore();
@@ -1000,7 +1612,7 @@ function ResultScreen({
   onNext,
   onSetup,
 }: {
-  race: { horses: Horse[]; title: string };
+  race: RaceInfo;
   order: Horse[];
   bets: Bet[];
   players: Player[];
@@ -1012,7 +1624,7 @@ function ResultScreen({
     .map((h) => h.num);
 
   return (
-    <section className="betting">
+    <section className="betting2 resultGrid">
       <div className="panel">
         <h2>🏁 レース結果 — {race.title}</h2>
         <table className="horseTable">
@@ -1050,22 +1662,26 @@ function ResultScreen({
             ))}
           </tbody>
         </table>
-        <h3>払戻金</h3>
+        <h3>払戻オッズ</h3>
         <ul className="payoutList">
           <li>
-            単勝 {order[0].num} — <b>{(order[0].odds * 100).toFixed(0)}円相当</b>{" "}
-            ({order[0].odds.toFixed(1)}倍)
+            単勝 {order[0].num} — <b>{order[0].odds.toFixed(1)}倍</b>
           </li>
           <li>
-            複勝 {order.slice(0, 3).map((h) => h.num).join(", ")} — 各
+            複勝{" "}
+            {order
+              .slice(0, 3)
+              .map((h) => h.num)
+              .join(", ")}{" "}
+            — 各
             {order
               .slice(0, 3)
               .map((h) => ` ${placeOdds(h.odds).toFixed(1)}倍`)
               .join(" /")}
           </li>
           <li>
-            馬連 {[order[0].num, order[1].num].sort((a, b) => a - b).join("-")} —{" "}
-            <b>{quinellaOdds(order[0], order[1]).toFixed(1)}倍</b>
+            馬連 {[order[0].num, order[1].num].sort((a, b) => a - b).join("-")}{" "}
+            — <b>{quinellaOdds(order[0], order[1]).toFixed(1)}倍</b>
           </li>
         </ul>
       </div>
@@ -1077,6 +1693,12 @@ function ResultScreen({
           return (
             <div key={pi} className="playerResult">
               <h3>
+                <span
+                  className="pAvatar sm"
+                  style={{ background: PLAYER_COLORS[pi % 6] }}
+                >
+                  {p.name.slice(0, 1)}
+                </span>{" "}
                 {p.name}{" "}
                 <span className="gold">{p.balance.toLocaleString()}pt</span>
               </h3>
@@ -1095,7 +1717,9 @@ function ResultScreen({
                     </li>
                   );
                 })}
-                {!myBets.length && <li className="muted">ノーベットだったよ</li>}
+                {!myBets.length && (
+                  <li className="muted">ノーベットだったよ</li>
+                )}
               </ul>
             </div>
           );
