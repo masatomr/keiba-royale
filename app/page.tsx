@@ -8,12 +8,12 @@ import {
   formatTime,
   generateRace,
   Horse,
+  horseSpeed,
   mulberry32,
   Player,
   placeOdds,
   quinellaOdds,
   RaceInfo,
-  styleMod,
   WAKU_COLORS,
   WAKU_TEXT,
 } from "./data";
@@ -680,17 +680,7 @@ function RaceScreen({
             continue;
           }
           const progress = h.pos / distance;
-          let v =
-            15.9 +
-            (h.ability - 78) * 0.052 +
-            styleMod(h.style, progress) * 0.9 +
-            h.form * 0.32 +
-            Math.sin(simT * 1.31 + h.noiseSeed) * 0.22 +
-            Math.sin(simT * 0.43 + h.noiseSeed * 2.7) * 0.18;
-          if (progress > 0.74) {
-            v +=
-              h.spurt * Math.min(1, (progress - 0.74) / 0.13) * (h.ability / 82);
-          }
+          const v = horseSpeed(h, progress, simT);
           const newPos = h.pos + v * dt;
           if (newPos >= distance) {
             h.finishTime =
@@ -1160,7 +1150,12 @@ function frame(
     } else if (p < 0.74) {
       live = `中盤の攻防！ ${leaderH.name} がリードを守る！`;
     } else {
-      live = `最後の直線！ ${leaderH.name} が粘る！ ${ranking[1].name} が迫る！`;
+      const closer = ranking
+        .slice(1, 5)
+        .find((x) => x.style === "差し" || x.style === "追込");
+      live = closer
+        ? `最後の直線！ ${leaderH.name} が粘る！ ${closer.name} が大外から一気に伸びてくる！`
+        : `最後の直線！ ${leaderH.name} が粘る！ ${ranking[1].name} が迫る！`;
     }
     const lg = ctx.createLinearGradient(0, H - 64, 0, H - 34);
     lg.addColorStop(0, "rgba(8,12,18,0)");

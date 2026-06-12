@@ -141,21 +141,30 @@ export function generateRace(seed: number, distance: number) {
   const rand = mulberry32(seed);
   const pool = [...LEGEND_HORSES];
   const horses: Horse[] = [];
+  // 末脚の強さは脚質依存(差し・追込ほどキレる)
+  const SPURT_RANGE: Record<RunStyle, [number, number]> = {
+    逃げ: [0.15, 0.75],
+    先行: [0.3, 0.95],
+    差し: [0.55, 1.35],
+    追込: [0.65, 1.55],
+  };
   for (let i = 0; i < 8; i++) {
     const idx = Math.floor(rand() * pool.length);
     const name = pool.splice(idx, 1)[0];
+    const style = STYLES[Math.floor(rand() * STYLES.length)];
+    const [sLo, sHi] = SPURT_RANGE[style];
     horses.push({
       num: i + 1,
       name,
       ability: 68 + rand() * 24,
-      style: STYLES[Math.floor(rand() * STYLES.length)],
+      style,
       odds: 0,
       prob: 0,
       coat: COAT_COLORS[Math.floor(rand() * COAT_COLORS.length)],
       pos: 0,
       finishTime: null,
       form: (rand() - 0.5) * 1.0,
-      spurt: 0.3 + rand() * 0.9,
+      spurt: sLo + rand() * (sHi - sLo),
       noiseSeed: rand() * 1000,
     });
   }
@@ -192,19 +201,35 @@ export function quinellaOdds(a: Horse, b: Horse) {
 }
 
 export function styleMod(style: RunStyle, progress: number) {
-  // レース展開: 序盤/中盤/終盤で脚質ごとに速度補正
-  const early = progress < 0.35 ? 1 : progress < 0.55 ? (0.55 - progress) / 0.2 : 0;
-  const late = progress > 0.72 ? Math.min(1, (progress - 0.72) / 0.18) : 0;
+  // レース展開: 序盤(〜30%)で隊列形成、終盤(70%〜)は末脚勝負。
+  // 脚質ごとの損得が(末脚込みで)ほぼゼロサムになるよう係数を調整してある。
+  const early = progress < 0.3 ? 1 : progress < 0.5 ? (0.5 - progress) / 0.2 : 0;
+  const late = progress > 0.7 ? Math.min(1, (progress - 0.7) / 0.15) : 0;
   switch (style) {
     case "逃げ":
-      return early * 1.0 - late * 0.55;
+      return early * 1.1 - late * 1.55;
     case "先行":
-      return early * 0.45 - late * 0.1;
+      return early * 0.5 - late * 0.85;
     case "差し":
-      return early * -0.45 + late * 0.55;
+      return early * -0.55 + late * 0.9;
     case "追込":
-      return early * -0.95 + late * 1.15;
+      return early * -1.05 + late * 1.95;
   }
+}
+
+// レース中の馬速(m/s)。アプリ本体とシミュレータで共通利用
+export function horseSpeed(h: Horse, progress: number, simT: number) {
+  let v =
+    15.9 +
+    (h.ability - 78) * 0.034 +
+    styleMod(h.style, progress) * 0.9 +
+    h.form * 0.65 +
+    Math.sin(simT * 1.31 + h.noiseSeed) * 0.28 +
+    Math.sin(simT * 0.43 + h.noiseSeed * 2.7) * 0.22;
+  if (progress > 0.74) {
+    v += h.spurt * Math.min(1, (progress - 0.74) / 0.13) * (h.ability / 82);
+  }
+  return v;
 }
 
 export function formatTime(t: number) {
