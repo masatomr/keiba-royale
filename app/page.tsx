@@ -154,7 +154,13 @@ export default function Home() {
         />
       )}
       {phase === "race" && race && (
-        <RaceScreen race={race} distance={distance} onFinish={onRaceFinish} />
+        <RaceScreen
+          race={race}
+          distance={distance}
+          bets={bets}
+          players={players}
+          onFinish={onRaceFinish}
+        />
       )}
       {phase === "result" && race && (
         <ResultScreen
@@ -636,12 +642,17 @@ type Particle = {
 function RaceScreen({
   race,
   distance,
+  bets,
+  players,
   onFinish,
 }: {
   race: RaceInfo;
   distance: number;
+  bets: Bet[];
+  players: Player[];
   onFinish: (order: Horse[]) => void;
 }) {
+  const [liveOrder, setLiveOrder] = useState<number[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const onFinishRef = useRef(onFinish);
   onFinishRef.current = onFinish;
@@ -667,6 +678,17 @@ function RaceScreen({
     const audio = new RaceAudio(localStorage.getItem("kr-muted") === "1");
     audioRef.current = audio;
     audio.fanfare();
+    // 馬番 → 賭けたプレイヤーの色リスト
+    const betMarks = new Map<number, string[]>();
+    for (const b of bets) {
+      for (const n of b.horses) {
+        const c = PLAYER_COLORS[b.playerIdx % 6];
+        const arr = betMarks.get(n) ?? [];
+        if (!arr.includes(c)) arr.push(c);
+        betMarks.set(n, arr);
+      }
+    }
+    let lastUi = 0;
     const horses: SimHorse[] = race.horses.map((h) => ({
       ...h,
       pos: 0,
@@ -739,6 +761,16 @@ function RaceScreen({
           );
           return;
         }
+        // 馬券ステータスバー用に現在順位を低頻度で通知
+        if (now - lastUi > 400) {
+          lastUi = now;
+          const ord = [...horses].sort(
+            (a, b) =>
+              (a.finishTime ?? Infinity) - (b.finishTime ?? Infinity) ||
+              b.pos - a.pos
+          );
+          setLiveOrder(ord.map((h) => h.num));
+        }
         // 紙吹雪
         if (flashT > 0 && simT - flashT < 5 && Math.random() < 0.8) {
           for (let i = 0; i < 4; i++) {
@@ -796,7 +828,8 @@ function RaceScreen({
         confetti,
         spurtT,
         flashT,
-        doneAt
+        doneAt,
+        betMarks
       );
       raf = requestAnimationFrame(tick);
     };
@@ -823,8 +856,69 @@ function RaceScreen({
       >
         {muted ? "🔇" : "🔊"}
       </button>
+      {bets.length > 0 && (
+        <div className="raceBets">
+          {bets.map((b, i) => {
+            const st = liveBetStatus(b, liveOrder);
+            return (
+              <div key={i} className={`raceBet ${st.cls}`}>
+                <span
+                  className="pAvatar sm"
+                  style={{ background: PLAYER_COLORS[b.playerIdx % 6] }}
+                  title={players[b.playerIdx].name}
+                >
+                  {players[b.playerIdx].name.slice(0, 1)}
+                </span>
+                <span className="rbType">{BET_LABEL[b.type]}</span>
+                <span className="rbHorses">
+                  {b.horses.map((n) => (
+                    <span key={n} className="rbHorse">
+                      <span
+                        className="waku"
+                        style={{
+                          background: WAKU_COLORS[n - 1],
+                          color: WAKU_TEXT[n - 1],
+                        }}
+                      >
+                        {n}
+                      </span>
+                      {race.horses.find((h) => h.num === n)!.name}
+                    </span>
+                  ))}
+                </span>
+                <span className="rbAmt">{b.amount.toLocaleString()}pt</span>
+                <span className="rbStatus">{st.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
+}
+
+// レース中の馬券のリアルタイム状況
+function liveBetStatus(
+  bet: Bet,
+  order: number[]
+): { label: string; cls: string } {
+  if (!order.length) return { label: "発走前", cls: "" };
+  const pos = (n: number) => order.indexOf(n) + 1;
+  if (bet.type === "win") {
+    const p = pos(bet.horses[0]);
+    if (p === 1) return { label: "🔥 現在1着！", cls: "hot" };
+    if (p <= 3) return { label: `現在${p}着`, cls: "warm" };
+    return { label: `現在${p}着`, cls: "off" };
+  }
+  if (bet.type === "place") {
+    const p = pos(bet.horses[0]);
+    if (p <= 3) return { label: `🎯 圏内 ${p}着`, cls: "hot" };
+    return { label: `圏外 ${p}着`, cls: "off" };
+  }
+  const inTop2 = bet.horses.filter((n) => pos(n) <= 2).length;
+  if (inTop2 === 2) return { label: "🔥 両方圏内！", cls: "hot" };
+  if (inTop2 === 1) return { label: "1頭圏内", cls: "warm" };
+  return { label: "圏外", cls: "off" };
 }
 
 // スタンド(事前描画)
@@ -913,7 +1007,8 @@ function frame(
   confetti: Particle[],
   spurtT: number,
   flashT: number,
-  doneAt: number | null
+  doneAt: number | null,
+  betMarks: Map<number, string[]>
 ) {
   const ranking = [...horses].sort((a, b) =>
     a.finishTime !== null || b.finishTime !== null
@@ -1101,6 +1196,24 @@ function frame(
       }
     }
     drawHorse(ctx, x, y, h, simT, sc, spurting);
+    // 賭けた馬の頭上にプレイヤーカラーの▼マーカー
+    const marks = betMarks.get(h.num);
+    if (marks) {
+      const my = y - 44 * sc + Math.sin(simT * 5 + h.num) * 2;
+      marks.forEach((c, i) => {
+        const mx = x + (i - (marks.length - 1) / 2) * 13 * sc;
+        ctx.fillStyle = c;
+        ctx.strokeStyle = "rgba(0,0,0,0.55)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(mx - 5.5 * sc, my - 8 * sc);
+        ctx.lineTo(mx + 5.5 * sc, my - 8 * sc);
+        ctx.lineTo(mx, my);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      });
+    }
   }
 
   // ---- 手前を流れる柵ポール(スピード感)
@@ -1169,6 +1282,16 @@ function frame(
       ctx.fillStyle = i === 0 ? "#ffd34d" : "#fff";
       ctx.font = "bold 12px sans-serif";
       ctx.fillText(`${i + 1} ${h.name}`, bx + 21, byy + 1);
+      // 馬券対象馬にはプレイヤーカラーのドット
+      const dots = betMarks.get(h.num);
+      if (dots) {
+        dots.forEach((c, di) => {
+          ctx.fillStyle = c;
+          ctx.beginPath();
+          ctx.arc(bx + 156 - di * 9, byy - 4, 3.4, 0, TW);
+          ctx.fill();
+        });
+      }
     }
   }
 
