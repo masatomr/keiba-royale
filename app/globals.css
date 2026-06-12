@@ -846,6 +846,24 @@ select {
   padding: 10px;
   background: #07090d;
   grid-column: 1 / -1;
+  position: relative;
+}
+.muteBtn {
+  position: absolute;
+  top: 52px;
+  right: 22px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(8, 12, 18, 0.72);
+  font-size: 17px;
+  line-height: 1;
+  transition: 0.15s;
+}
+.muteBtn:hover {
+  border-color: var(--gold);
+  transform: scale(1.06);
 }
 
 /* ---------- result ---------- */

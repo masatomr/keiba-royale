@@ -17,6 +17,7 @@ import {
   WAKU_COLORS,
   WAKU_TEXT,
 } from "./data";
+import { RaceAudio } from "./audio";
 
 type Phase = "setup" | "betting" | "race" | "result";
 
@@ -644,10 +645,28 @@ function RaceScreen({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const onFinishRef = useRef(onFinish);
   onFinishRef.current = onFinish;
+  const audioRef = useRef<RaceAudio | null>(null);
+  const [muted, setMuted] = useState(false);
+
+  useEffect(() => {
+    setMuted(localStorage.getItem("kr-muted") === "1");
+  }, []);
+
+  const toggleMute = () => {
+    setMuted((m) => {
+      const next = !m;
+      localStorage.setItem("kr-muted", next ? "1" : "0");
+      audioRef.current?.setMuted(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
+    const audio = new RaceAudio(localStorage.getItem("kr-muted") === "1");
+    audioRef.current = audio;
+    audio.fanfare();
     const horses: SimHorse[] = race.horses.map((h) => ({
       ...h,
       pos: 0,
@@ -671,9 +690,12 @@ function RaceScreen({
       last = now;
       const before = simT;
       simT += dtReal * (simT < 0 ? 1 : SIM_SPEED);
+      if (before < 0 && simT >= 0) audio.startRace();
 
       if (simT >= 0) {
         const dt = simT - Math.max(0, before);
+        const hadFlash = flashT > 0;
+        const hadSpurt = spurtT > 0;
         for (const h of horses) {
           if (h.finishTime !== null) {
             h.pos += 14 * dt;
@@ -704,11 +726,14 @@ function RaceScreen({
         const leaderPos = Math.max(...horses.map((h) => h.pos));
         const remaining = distance - leaderPos;
         if (remaining <= 420 && remaining > 0 && spurtT === 0) spurtT = simT;
+        if (!hadSpurt && spurtT > 0) audio.finalStretch();
+        if (!hadFlash && flashT > 0) audio.goal();
         if (horses.every((h) => h.finishTime !== null) && doneAt === null) {
           doneAt = simT;
         }
         if (doneAt !== null && simT - doneAt > 30) {
           cancelAnimationFrame(raf);
+          audio.dispose();
           onFinishRef.current(
             [...horses].sort((a, b) => a.finishTime! - b.finishTime!)
           );
@@ -776,7 +801,10 @@ function RaceScreen({
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      audio.dispose();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -788,6 +816,13 @@ function RaceScreen({
         height={H}
         style={{ width: "100%", maxWidth: 960, borderRadius: 12 }}
       />
+      <button
+        className="muteBtn"
+        onClick={toggleMute}
+        title={muted ? "BGMをオンにする" : "BGMをミュート"}
+      >
+        {muted ? "🔇" : "🔊"}
+      </button>
     </section>
   );
 }
